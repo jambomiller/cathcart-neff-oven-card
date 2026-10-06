@@ -1,4 +1,4 @@
-const VERSION = "1.0.2";
+const VERSION = "1.0.3";
 
 const PERIODS = [
   { id: "today", label: "Today" },
@@ -54,7 +54,7 @@ class CathcartEnergyCard extends HTMLElement {
   }
 
   getGridOptions() {
-    return { columns: 12, min_columns: 6, rows: 10, min_rows: 8 };
+    return { columns: 12, min_columns: 6, rows: 14, min_rows: 10 };
   }
 
   _num(entity) {
@@ -117,7 +117,7 @@ class CathcartEnergyCard extends HTMLElement {
       const date = new Date(start);
       date.setDate(start.getDate() + index);
       const label = this._period === "week"
-        ? date.toLocaleDateString("en-GB", { weekday: "narrow" })
+        ? ["M", "T", "W", "T", "F", "S", "S"][index]
         : (index === 0 || date.getDate() % 5 === 0 ? String(date.getDate()) : "");
       return { key: this._key(date, "day"), label, date };
     });
@@ -128,7 +128,7 @@ class CathcartEnergyCard extends HTMLElement {
       const date = new Date(start.getFullYear(), start.getMonth() + index, 1);
       return {
         key: this._key(date, "month"),
-        label: date.toLocaleDateString("en-GB", { month: "narrow" }),
+        label: date.toLocaleDateString("en-GB", { month: "short" }),
         date,
       };
     });
@@ -222,7 +222,7 @@ class CathcartEnergyCard extends HTMLElement {
       const height = maxBar > 0 ? Math.max(total > 0 ? 4 : 0, (total / maxBar) * 100) : 0;
       const segments = devices.map((device, deviceIndex) => {
         const value = values[index][deviceIndex];
-        const share = total > 0 ? (value / total) * height : 0;
+        const share = total > 0 ? (value / total) * 100 : 0;
         return `<i style="height:${share}%;background:${device.color}"></i>`;
       }).join("");
       return `<button type="button" class="bar ${index === selected ? "on" : ""}" data-bar="${index}" aria-label="${this._escape(bucket.label || "usage")}">
@@ -262,7 +262,7 @@ class CathcartEnergyCard extends HTMLElement {
         <strong>${this._money(periodKwh * rate)}</strong>
         <p>${this._kwh(periodKwh)} · ${pence}p/kWh</p>
       </div>
-      <div class="chart ${maxBar === 0 ? "empty-chart" : ""}">${bars}</div>
+      <div class="chart ${maxBar === 0 ? "empty-chart" : ""}" style="--bars:${buckets.length}">${bars}</div>
       <div class="legend">${legend}</div>
       <p class="note">${this._escape(chartNote)}</p>
       <div class="devices">${rows}</div>
@@ -306,33 +306,34 @@ class CathcartEnergyCard extends HTMLElement {
 
   _frame(content) {
     return `<style>
-      :host{display:block}
-      ha-card{padding:16px 14px 12px}
-      .tabs{display:grid;grid-template-columns:repeat(4,1fr);gap:6px}
+      :host{display:block;min-width:0}
+      ha-card{padding:16px 14px 12px;min-width:0}
+      .tabs{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:6px}
       .tabs button,.bar,.device{font:inherit;color:inherit;background:var(--secondary-background-color);border:0}
-      .tabs button{border-radius:999px;min-height:34px;font-weight:650}
+      .tabs button{border-radius:999px;min-height:34px;font-weight:650;min-width:0}
       .tabs button.on{background:#1a73e8;color:#fff}
       .hero{padding:16px 2px 8px}
       .hero strong{display:block;font-size:2.4rem;font-weight:750;letter-spacing:-.04em;line-height:.95}
       .hero p,.note,.fine{color:var(--secondary-text-color)}
       .hero p{margin:6px 0 0}
-      .chart{height:148px;display:grid;grid-auto-flow:column;grid-auto-columns:1fr;gap:3px;align-items:end;padding-top:8px}
-      .bar{height:100%;display:grid;grid-template-rows:1fr auto;align-items:end;justify-items:center;background:transparent;padding:0;cursor:pointer}
-      .bar span{width:70%;max-width:18px;min-height:2px;background:color-mix(in srgb,var(--divider-color) 80%,transparent);border-radius:7px 7px 3px 3px;display:flex;flex-direction:column-reverse;overflow:hidden}
+      .chart{height:148px;display:grid;grid-template-columns:repeat(var(--bars),minmax(0,1fr));gap:2px;align-items:end;padding:8px 2px 0;min-width:0}
+      .bar{height:100%;min-width:0;display:grid;grid-template-rows:1fr auto;align-items:end;justify-items:center;background:transparent;padding:0;cursor:pointer}
+      .bar span{width:70%;max-width:16px;min-height:2px;background:color-mix(in srgb,var(--divider-color) 80%,transparent);border-radius:7px 7px 3px 3px;display:flex;flex-direction:column-reverse;overflow:hidden}
       .bar i{display:block;width:100%}
-      .bar small{height:16px;font-size:.65rem;color:var(--secondary-text-color)}
-      .bar.on span{outline:2px solid var(--primary-text-color);outline-offset:2px}
-      .legend{display:flex;flex-wrap:wrap;gap:10px 14px;margin-top:4px;font-size:.78rem;color:var(--secondary-text-color)}
+      .bar small{height:16px;font-size:.62rem;color:var(--secondary-text-color);line-height:16px}
+      .bar.on span{box-shadow:0 0 0 2px var(--primary-text-color)}
+      .legend{display:flex;flex-wrap:wrap;gap:8px 12px;margin-top:4px;font-size:.78rem;color:var(--secondary-text-color)}
       .legend i{display:inline-block;width:8px;height:8px;border-radius:99px;margin-right:6px}
       .note{min-height:1.2em;margin:8px 0 0;font-size:.82rem}
       .devices{display:grid;gap:8px;margin-top:8px}
-      .device{display:grid;grid-template-columns:auto 1fr auto;gap:10px;align-items:center;text-align:left;border-radius:14px;padding:10px 12px;cursor:pointer}
+      .device{display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:10px;align-items:center;text-align:left;border-radius:14px;padding:10px 12px;cursor:pointer;min-width:0}
       .device ha-icon{color:#1a73e8}
       .copy{display:grid;gap:6px;min-width:0}
       .copy strong{font-size:.95rem}
       .track{display:block;height:7px;border-radius:99px;background:color-mix(in srgb,var(--divider-color) 75%,transparent);overflow:hidden}
       .track i{display:block;height:100%;border-radius:99px}
-      .figures{display:grid;justify-items:end;gap:2px}
+      .figures{display:grid;justify-items:end;gap:2px;white-space:nowrap}
+      .figures b{font-size:.92rem}
       .figures small{color:var(--secondary-text-color)}
       .fine{margin:12px 0 0;font-size:.72rem}
       .empty{padding:28px 8px;text-align:center;color:var(--secondary-text-color)}
