@@ -1,4 +1,4 @@
-const VERSION = "1.0.3";
+const VERSION = "1.1.0";
 
 const PERIODS = [
   { id: "today", label: "Today" },
@@ -15,6 +15,9 @@ class CathcartEnergyCard extends HTMLElement {
     this._selected = null;
     this._stats = null;
     this._loadToken = 0;
+    this._filterOpen = false;
+    this._filterQuery = "";
+    this._hidden = null;
   }
 
   static getStubConfig() {
@@ -29,6 +32,7 @@ class CathcartEnergyCard extends HTMLElement {
     this._config = config;
     this._stats = null;
     this._selected = null;
+    this._hidden = this._loadHidden();
   }
 
   set hass(hass) {
@@ -54,7 +58,7 @@ class CathcartEnergyCard extends HTMLElement {
   }
 
   getGridOptions() {
-    return { columns: 12, min_columns: 6, rows: 14, min_rows: 10 };
+    return { columns: 12, min_columns: 6, rows: 16, min_rows: 12 };
   }
 
   _num(entity) {
@@ -64,6 +68,34 @@ class CathcartEnergyCard extends HTMLElement {
 
   _rate() {
     return this._num(this._config.rate) ?? 0;
+  }
+
+  _loadHidden() {
+    try {
+      const stored = JSON.parse(localStorage.getItem("cathcart-energy-hidden") || "[]");
+      const known = new Set(this._config.devices.map((device) => device.energy));
+      return new Set(stored.filter((id) => known.has(id)));
+    } catch {
+      return new Set();
+    }
+  }
+
+  _saveHidden() {
+    localStorage.setItem("cathcart-energy-hidden", JSON.stringify([...this._hidden]));
+  }
+
+  _shownDevices() {
+    if (!this._hidden) this._hidden = this._loadHidden();
+    return this._config.devices.filter((device) => !this._hidden.has(device.energy));
+  }
+
+  _filterLabel() {
+    const devices = this._config.devices;
+    const shown = this._shownDevices();
+    if (shown.length === devices.length) return "All devices";
+    if (!shown.length) return "No devices";
+    if (shown.length === 1) return shown[0].name;
+    return `${shown[0].name} +${shown.length - 1}`;
   }
 
   _escape(value) {
@@ -179,9 +211,10 @@ class CathcartEnergyCard extends HTMLElement {
     return { buckets, values };
   }
 
-  _latestBucket() {
+  _latestBucket(values) {
     if (!this._stats) return null;
-    const { buckets, values } = this._series();
+    const buckets = values ? this._range().buckets : this._series().buckets;
+    values = values || this._series().values;
     for (let index = buckets.length - 1; index >= 0; index -= 1) {
       if (values[index].some((value) => value > 0)) return index;
     }
@@ -207,21 +240,25 @@ class CathcartEnergyCard extends HTMLElement {
     }
     const rate = this._rate();
     const devices = this._config.devices;
+    const shown = new Set(this._shownDevices().map((device) => device.energy));
     const { buckets, values } = this._series();
-    const totals = devices.map((_, index) => this._periodTotal(index));
+    const totals = devices.map((device, index) => shown.has(device.energy) ? this._periodTotal(index) : 0);
+    const visibleValues = values.map((bucket) => bucket.map((value, index) => shown.has(devices[index].energy) ? value : 0));
     const periodKwh = totals.reduce((sum, value) => sum + value, 0);
     const maxShare = Math.max(...totals, 0);
-    const maxBar = Math.max(...values.map((bucket) => bucket.reduce((sum, value) => sum + value, 0)), 0);
-    const selected = this._selected != null && buckets[this._selected] ? this._selected : this._latestBucket();
-    const selectedValues = selected == null ? [] : values[selected];
+    const maxBar = Math.max(...visibleValues.map((bucket) => bucket.reduce((sum, value) => sum + value, 0)), 0);
+    const selected = this._selected != null && buckets[this._selected] ? this._selected : this._latestBucket(visibleValues);
+    const selectedValues = selected == null ? [] : visibleValues[selected];
     const selectedKwh = selectedValues.reduce((sum, value) => sum + value, 0);
     const selectedLabel = selected == null ? "" : this._bucketLabel(buckets[selected].date);
+    const query = this._filterQuery.trim().toLowerCase();
 
     const bars = buckets.map((bucket, index) => {
-      const total = values[index].reduce((sum, value) => sum + value, 0);
+      const total = visibleValues[index].reduce((sum, value) => sum + value, 0);
       const height = maxBar > 0 ? Math.max(total > 0 ? 4 : 0, (total / maxBar) * 100) : 0;
       const segments = devices.map((device, deviceIndex) => {
-        const value = values[index][deviceIndex];
+        if (!shown.has(device.energy)) return "";
+        const value = visibleValues[index][deviceIndex];
         const share = total > 0 ? (value / total) * 100 : 0;
         return `<i style="height:${share}%;background:${device.color}"></i>`;
       }).join("");
@@ -231,9 +268,10 @@ class CathcartEnergyCard extends HTMLElement {
       </button>`;
     }).join("");
 
-    const legend = devices.map((device) => `<span><i style="background:${device.color}"></i>${this._escape(device.name)}</span>`).join("");
+    const legend = devices.filter((device) => shown.has(device.energy)).map((device) => `<span><i style="background:${device.color}"></i>${this._escape(device.name)}</span>`).join("");
 
-    const rows = devices.map((device, index) => {
+    const rows = devices.filter((device) => shown.has(device.energy)).map((device) => {
+      const index = devices.indexOf(device);
       const kwh = totals[index];
       const width = maxShare > 0 ? Math.max(kwh > 0 ? 6 : 0, (kwh / maxShare) * 100) : 0;
       return `<button type="button" class="device" data-hash="${this._escape(device.hash || "")}">
@@ -249,14 +287,45 @@ class CathcartEnergyCard extends HTMLElement {
       </button>`;
     }).join("");
 
+    const options = devices.map((device) => {
+      const visible = !query || device.name.toLowerCase().includes(query);
+      const checked = shown.has(device.energy) ? "checked" : "";
+      return `<label class="check" ${visible ? "" : "hidden"}>
+        <input type="checkbox" data-filter-device="${this._escape(device.energy)}" ${checked}>
+        <i style="background:${this._escape(device.color)}"></i>
+        <span>${this._escape(device.name)}</span>
+      </label>`;
+    }).join("");
+    const matching = devices.filter((device) => !query || device.name.toLowerCase().includes(query));
+    const matchingShown = matching.filter((device) => shown.has(device.energy)).length;
+    const allChecked = matching.length > 0 && matchingShown === matching.length ? "checked" : "";
+
     const pence = (rate * 100).toLocaleString("en-GB", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-    const chartNote = this._period === "total"
-      ? "Bars show recorded months. The total above is the full meter reading."
-      : (selected == null ? "" : `${selectedLabel} · ${this._kwh(selectedKwh)} · ${this._money(selectedKwh * rate)}`);
+    const chartNote = !shown.size
+      ? "No devices selected."
+      : this._period === "total"
+        ? "Bars show recorded months. The total above is the full meter reading."
+        : (selected == null ? "" : `${selectedLabel} · ${this._kwh(selectedKwh)} · ${this._money(selectedKwh * rate)}`);
 
     this.shadowRoot.innerHTML = this._frame(`
+      ${this._filterOpen ? `<button type="button" class="backdrop" data-filter-close aria-label="Close filter"></button>` : ""}
       <div class="tabs">
         ${PERIODS.map((period) => `<button type="button" data-period="${period.id}" class="${period.id === this._period ? "on" : ""}">${period.label}</button>`).join("")}
+      </div>
+      <div class="filter">
+        <button type="button" class="filter-btn" data-filter-toggle aria-expanded="${this._filterOpen}">
+          <ha-icon icon="mdi:filter-variant"></ha-icon>
+          <span>${this._escape(this._filterLabel())}</span>
+          <ha-icon icon="mdi:chevron-down"></ha-icon>
+        </button>
+        ${this._filterOpen ? `<div class="menu">
+          <input class="search" data-filter-search placeholder="Search" value="${this._escape(this._filterQuery)}" autocomplete="off">
+          <label class="check">
+            <input type="checkbox" data-filter-all ${allChecked}>
+            <span>(Select all)</span>
+          </label>
+          <div class="options">${options}</div>
+        </div>` : ""}
       </div>
       <div class="hero">
         <strong>${this._money(periodKwh * rate)}</strong>
@@ -302,6 +371,68 @@ class CathcartEnergyCard extends HTMLElement {
         window.dispatchEvent(new Event("location-changed"));
       });
     });
+    this.shadowRoot.querySelector("[data-filter-toggle]")?.addEventListener("click", () => {
+      this._filterOpen = !this._filterOpen;
+      if (!this._filterOpen) {
+        this._filterQuery = "";
+        this._searchFocused = false;
+      }
+      this._render();
+    });
+    this.shadowRoot.querySelector("[data-filter-close]")?.addEventListener("click", () => {
+      this._filterOpen = false;
+      this._filterQuery = "";
+      this._searchFocused = false;
+      this._render();
+    });
+    const search = this.shadowRoot.querySelector("[data-filter-search]");
+    search?.addEventListener("input", () => {
+      this._filterQuery = search.value;
+      this._searchFocused = true;
+      this._render();
+    });
+    if (search && this._searchFocused) {
+      search.focus();
+      const end = search.value.length;
+      search.setSelectionRange(end, end);
+    }
+    const all = this.shadowRoot.querySelector("[data-filter-all]");
+    if (all) {
+      const query = this._filterQuery.trim().toLowerCase();
+      const matching = this._config.devices.filter((device) => !query || device.name.toLowerCase().includes(query));
+      const shown = matching.filter((device) => !this._hidden.has(device.energy)).length;
+      all.indeterminate = shown > 0 && shown < matching.length;
+      all.addEventListener("change", () => {
+        for (const device of matching) {
+          if (all.checked) this._hidden.delete(device.energy);
+          else this._hidden.add(device.energy);
+        }
+        this._selected = null;
+        this._saveHidden();
+        this._render();
+      });
+    }
+    this.shadowRoot.querySelectorAll("[data-filter-device]").forEach((input) => {
+      input.addEventListener("change", () => {
+        if (input.checked) this._hidden.delete(input.dataset.filterDevice);
+        else this._hidden.add(input.dataset.filterDevice);
+        this._selected = null;
+        this._saveHidden();
+        this._render();
+      });
+    });
+    this._placeMenu();
+  }
+
+  _placeMenu() {
+    const menu = this.shadowRoot.querySelector(".menu");
+    const button = this.shadowRoot.querySelector(".filter-btn");
+    if (!menu || !button) return;
+    const rect = button.getBoundingClientRect();
+    const left = Math.max(8, Math.min(rect.left, window.innerWidth - rect.width - 8));
+    menu.style.top = `${rect.bottom + 6}px`;
+    menu.style.left = `${left}px`;
+    menu.style.width = `${rect.width}px`;
   }
 
   _frame(content) {
@@ -312,6 +443,19 @@ class CathcartEnergyCard extends HTMLElement {
       .tabs button,.bar,.device{font:inherit;color:inherit;background:var(--secondary-background-color);border:0}
       .tabs button{border-radius:999px;min-height:34px;font-weight:650;min-width:0}
       .tabs button.on{background:#1a73e8;color:#fff}
+      .filter{position:relative;z-index:32;margin-top:10px}
+      .filter-btn{width:100%;display:flex;align-items:center;gap:8px;min-height:40px;border-radius:12px;padding:0 12px;background:var(--secondary-background-color);border:0;font:inherit;color:inherit;cursor:pointer}
+      .filter-btn span{flex:1;text-align:left;font-weight:650;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+      .filter-btn ha-icon{--mdc-icon-size:20px;width:20px;height:20px;color:#1a73e8}
+      .filter-btn ha-icon:last-child{color:var(--secondary-text-color)}
+      .backdrop{position:fixed;inset:0;border:0;padding:0;background:transparent;z-index:30}
+      .menu{position:fixed;z-index:31;box-sizing:border-box;background:var(--ha-card-background,var(--card-background-color,#fff));color:var(--primary-text-color);border-radius:14px;box-shadow:0 10px 32px rgba(0,0,0,.22);padding:8px;max-height:min(320px,60vh);display:flex;flex-direction:column}
+      .search{width:100%;box-sizing:border-box;border:0;border-radius:8px;background:var(--secondary-background-color);color:inherit;min-height:36px;padding:0 10px;font:inherit;margin-bottom:4px}
+      .options{overflow:auto}
+      .check{display:flex;align-items:center;gap:10px;min-height:44px;padding:0 6px;font-size:.95rem}
+      .check input{width:18px;height:18px;margin:0}
+      .check i{width:8px;height:8px;border-radius:99px;flex:none}
+      .check[hidden]{display:none}
       .hero{padding:16px 2px 8px}
       .hero strong{display:block;font-size:2.4rem;font-weight:750;letter-spacing:-.04em;line-height:.95}
       .hero p,.note,.fine{color:var(--secondary-text-color)}
