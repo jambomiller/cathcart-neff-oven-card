@@ -1,4 +1,4 @@
-const VERSION = "1.1.0";
+const VERSION = "1.1.1";
 
 const PERIODS = [
   { id: "today", label: "Today" },
@@ -308,7 +308,6 @@ class CathcartEnergyCard extends HTMLElement {
         : (selected == null ? "" : `${selectedLabel} · ${this._kwh(selectedKwh)} · ${this._money(selectedKwh * rate)}`);
 
     this.shadowRoot.innerHTML = this._frame(`
-      ${this._filterOpen ? `<button type="button" class="backdrop" data-filter-close aria-label="Close filter"></button>` : ""}
       <div class="tabs">
         ${PERIODS.map((period) => `<button type="button" data-period="${period.id}" class="${period.id === this._period ? "on" : ""}">${period.label}</button>`).join("")}
       </div>
@@ -379,7 +378,9 @@ class CathcartEnergyCard extends HTMLElement {
       }
       this._render();
     });
-    this.shadowRoot.querySelector("[data-filter-close]")?.addEventListener("click", () => {
+    this.shadowRoot.querySelector("ha-card")?.addEventListener("click", (event) => {
+      if (!this._filterOpen) return;
+      if (event.composedPath().some((node) => node.classList?.contains("filter"))) return;
       this._filterOpen = false;
       this._filterQuery = "";
       this._searchFocused = false;
@@ -421,35 +422,22 @@ class CathcartEnergyCard extends HTMLElement {
         this._render();
       });
     });
-    this._placeMenu();
-  }
-
-  _placeMenu() {
-    const menu = this.shadowRoot.querySelector(".menu");
-    const button = this.shadowRoot.querySelector(".filter-btn");
-    if (!menu || !button) return;
-    const rect = button.getBoundingClientRect();
-    const left = Math.max(8, Math.min(rect.left, window.innerWidth - rect.width - 8));
-    menu.style.top = `${rect.bottom + 6}px`;
-    menu.style.left = `${left}px`;
-    menu.style.width = `${rect.width}px`;
   }
 
   _frame(content) {
     return `<style>
       :host{display:block;min-width:0}
-      ha-card{padding:16px 14px 12px;min-width:0}
+      ha-card{padding:16px 14px 12px;min-width:0;overflow:visible}
       .tabs{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:6px}
       .tabs button,.bar,.device{font:inherit;color:inherit;background:var(--secondary-background-color);border:0}
       .tabs button{border-radius:999px;min-height:34px;font-weight:650;min-width:0}
       .tabs button.on{background:#1a73e8;color:#fff}
-      .filter{position:relative;z-index:32;margin-top:10px}
+      .filter{position:relative;z-index:2;margin-top:10px}
       .filter-btn{width:100%;display:flex;align-items:center;gap:8px;min-height:40px;border-radius:12px;padding:0 12px;background:var(--secondary-background-color);border:0;font:inherit;color:inherit;cursor:pointer}
       .filter-btn span{flex:1;text-align:left;font-weight:650;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
       .filter-btn ha-icon{--mdc-icon-size:20px;width:20px;height:20px;color:#1a73e8}
       .filter-btn ha-icon:last-child{color:var(--secondary-text-color)}
-      .backdrop{position:fixed;inset:0;border:0;padding:0;background:transparent;z-index:30}
-      .menu{position:fixed;z-index:31;box-sizing:border-box;background:var(--ha-card-background,var(--card-background-color,#fff));color:var(--primary-text-color);border-radius:14px;box-shadow:0 10px 32px rgba(0,0,0,.22);padding:8px;max-height:min(320px,60vh);display:flex;flex-direction:column}
+      .menu{position:relative;z-index:2;box-sizing:border-box;width:100%;margin-top:6px;background:var(--ha-card-background,var(--card-background-color,#fff));color:var(--primary-text-color);border:1px solid var(--divider-color);border-radius:14px;box-shadow:0 8px 24px rgba(0,0,0,.16);padding:8px;max-height:240px;display:flex;flex-direction:column}
       .search{width:100%;box-sizing:border-box;border:0;border-radius:8px;background:var(--secondary-background-color);color:inherit;min-height:36px;padding:0 10px;font:inherit;margin-bottom:4px}
       .options{overflow:auto}
       .check{display:flex;align-items:center;gap:10px;min-height:44px;padding:0 6px;font-size:.95rem}
