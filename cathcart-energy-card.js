@@ -1,4 +1,4 @@
-const VERSION = "1.0.1";
+const VERSION = "1.0.2";
 
 const PERIODS = [
   { id: "today", label: "Today" },
@@ -11,7 +11,7 @@ class CathcartEnergyCard extends HTMLElement {
   constructor() {
     super();
     this.attachShadow({ mode: "open" });
-    this._period = "month";
+    this._period = "today";
     this._selected = null;
     this._stats = null;
     this._loadToken = 0;
@@ -33,12 +33,14 @@ class CathcartEnergyCard extends HTMLElement {
 
   set hass(hass) {
     this._hass = hass;
+    if (!this._config || this._loading) return;
     const stamp = `${hass.states[this._config.rate]?.state}|${this._config.devices.map((device) => hass.states[device.energy]?.state).join("|")}`;
-    const stale = !this._stats || Date.now() - (this._fetchedAt || 0) > 60000;
-    if (stale) {
-      this._fetchedAt = Date.now();
+    const due = !this._fetchedAt || Date.now() - this._fetchedAt > 60000;
+    if (!this._stats || due) {
       this._stamp = stamp;
-      this._load();
+      this._fetchedAt = Date.now();
+      this._loading = true;
+      this._load().finally(() => { this._loading = false; });
       return;
     }
     if (stamp !== this._stamp) {
@@ -281,7 +283,9 @@ class CathcartEnergyCard extends HTMLElement {
         this._period = button.dataset.period;
         this._selected = null;
         this._stats = null;
-        this._load();
+        this._fetchedAt = Date.now();
+        this._loading = true;
+        this._load().finally(() => { this._loading = false; });
       });
     });
     this.shadowRoot.querySelectorAll("[data-bar]").forEach((button) => {
