@@ -1,4 +1,4 @@
-const VERSION = "1.0.0";
+const VERSION = "1.0.1";
 
 const PERIODS = [
   { id: "today", label: "Today" },
@@ -32,10 +32,19 @@ class CathcartEnergyCard extends HTMLElement {
   }
 
   set hass(hass) {
-    const first = !this._hass;
     this._hass = hass;
-    if (first || !this._stats) this._load();
-    else this._render();
+    const stamp = `${hass.states[this._config.rate]?.state}|${this._config.devices.map((device) => hass.states[device.energy]?.state).join("|")}`;
+    const stale = !this._stats || Date.now() - (this._fetchedAt || 0) > 60000;
+    if (stale) {
+      this._fetchedAt = Date.now();
+      this._stamp = stamp;
+      this._load();
+      return;
+    }
+    if (stamp !== this._stamp) {
+      this._stamp = stamp;
+      this._render();
+    }
   }
 
   getCardSize() {
@@ -209,13 +218,10 @@ class CathcartEnergyCard extends HTMLElement {
     const bars = buckets.map((bucket, index) => {
       const total = values[index].reduce((sum, value) => sum + value, 0);
       const height = maxBar > 0 ? Math.max(total > 0 ? 4 : 0, (total / maxBar) * 100) : 0;
-      let cursor = 0;
       const segments = devices.map((device, deviceIndex) => {
         const value = values[index][deviceIndex];
         const share = total > 0 ? (value / total) * height : 0;
-        const segment = `<i style="height:${share}%;background:${device.color}"></i>`;
-        cursor += share;
-        return segment;
+        return `<i style="height:${share}%;background:${device.color}"></i>`;
       }).join("");
       return `<button type="button" class="bar ${index === selected ? "on" : ""}" data-bar="${index}" aria-label="${this._escape(bucket.label || "usage")}">
         <span style="height:${height}%">${segments}</span>
